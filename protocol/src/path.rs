@@ -20,7 +20,11 @@ pub fn linux_to_windows(path: &str) -> String {
             format!("{}:\\", rest)
         }
     } else {
-        format!("{}\\{}", LINUX_ROOT_DRIVE, path.replacen('/', "", 1).replace('/', "\\"))
+        format!(
+            "{}\\{}",
+            LINUX_ROOT_DRIVE,
+            path.replacen('/', "", 1).replace('/', "\\")
+        )
     }
 }
 

@@ -20,10 +20,14 @@ pub mod win {
         let status = Command::new("schtasks")
             .args([
                 "/create",
-                "/tn", TASK_NAME,
-                "/tr", &format!("\"{exe_str}\""),
-                "/sc", "onlogon",
-                "/rl", "highest",
+                "/tn",
+                TASK_NAME,
+                "/tr",
+                &format!("\"{exe_str}\""),
+                "/sc",
+                "onlogon",
+                "/rl",
+                "highest",
             ])
             .status()?;
 

@@ -50,6 +50,7 @@ pub async fn run_exec(program: String, args: Vec<String>) -> i32 {
     } else {
         program
     };
+    let (program, translated_args) = wrap_script_invocation(program, translated_args);
 
     let req = ExecRequest {
         program,
@@ -135,49 +136,36 @@ pub async fn run_exec(program: String, args: Vec<String>) -> i32 {
     loop {
         match reader.read_buf(&mut net_buf).await {
             Ok(0) => break,
-            Ok(_) => {
-                loop {
-                    match decode_frame(&mut net_buf) {
-                        Ok(Some(frame)) => match frame.frame_type {
-                            FrameType::StdoutData => {
-                                let _ = stdout.write_all(&frame.payload).await;
-                                let _ = stdout.flush().await;
+            Ok(_) => loop {
+                match decode_frame(&mut net_buf) {
+                    Ok(Some(frame)) => match frame.frame_type {
+                        FrameType::StdoutData => {
+                            let _ = stdout.write_all(&frame.payload).await;
+                            let _ = stdout.flush().await;
+                        }
+                        FrameType::StderrData => {
+                            let _ = stderr.write_all(&frame.payload).await;
+                            let _ = stderr.flush().await;
+                        }
+                        FrameType::ExitCode => {
+                            if frame.payload.len() == 4 {
+                                exit_code = i32::from_be_bytes([
+                                    frame.payload[0],
+                                    frame.payload[1],
+                                    frame.payload[2],
+                                    frame.payload[3],
+                                ]);
                             }
-                            FrameType::StderrData => {
-                                let _ = stderr.write_all(&frame.payload).await;
-                                let _ = stderr.flush().await;
+                            stdin_task.abort();
+                            #[cfg(unix)]
+                            if let Some(t) = resize_task {
+                                t.abort();
                             }
-                            FrameType::ExitCode => {
-                                if frame.payload.len() == 4 {
-                                    exit_code = i32::from_be_bytes([
-                                        frame.payload[0],
-                                        frame.payload[1],
-                                        frame.payload[2],
-                                        frame.payload[3],
-                                    ]);
-                                }
-                                stdin_task.abort();
-                                #[cfg(unix)]
-                                if let Some(t) = resize_task {
-                                    t.abort();
-                                }
-                                return exit_code;
-                            }
-                            FrameType::Error => {
-                                let msg = String::from_utf8_lossy(&frame.payload);
-                                eprintln!("interop-client: server error: {msg}");
-                                stdin_task.abort();
-                                #[cfg(unix)]
-                                if let Some(t) = resize_task {
-                                    t.abort();
-                                }
-                                return 127;
-                            }
-                            _ => {}
-                        },
-                        Ok(None) => break,
-                        Err(e) => {
-                            eprintln!("interop-client: decode error: {e}");
+                            return exit_code;
+                        }
+                        FrameType::Error => {
+                            let msg = String::from_utf8_lossy(&frame.payload);
+                            eprintln!("interop-client: server error: {msg}");
                             stdin_task.abort();
                             #[cfg(unix)]
                             if let Some(t) = resize_task {
@@ -185,9 +173,20 @@ pub async fn run_exec(program: String, args: Vec<String>) -> i32 {
                             }
                             return 127;
                         }
+                        _ => {}
+                    },
+                    Ok(None) => break,
+                    Err(e) => {
+                        eprintln!("interop-client: decode error: {e}");
+                        stdin_task.abort();
+                        #[cfg(unix)]
+                        if let Some(t) = resize_task {
+                            t.abort();
+                        }
+                        return 127;
                     }
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("interop-client: read error: {e}");
                 break;
@@ -201,4 +200,86 @@ pub async fn run_exec(program: String, args: Vec<String>) -> i32 {
         t.abort();
     }
     exit_code
+}
+
+/// Wrap Windows script extensions with their host shell.
+///
+/// - `.cmd` / `.bat` => `cmd.exe /d /s /c <script> ...`
+/// - `.ps1` => `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File <script> ...`
+fn wrap_script_invocation(program: String, args: Vec<String>) -> (String, Vec<String>) {
+    let lower = program.to_ascii_lowercase();
+    if lower.ends_with(".cmd") || lower.ends_with(".bat") {
+        let mut wrapped_args = Vec::with_capacity(args.len() + 4);
+        wrapped_args.push("/d".to_string());
+        wrapped_args.push("/s".to_string());
+        wrapped_args.push("/c".to_string());
+        wrapped_args.push(program);
+        wrapped_args.extend(args);
+        ("cmd.exe".to_string(), wrapped_args)
+    } else if lower.ends_with(".ps1") {
+        let mut wrapped_args = Vec::with_capacity(args.len() + 6);
+        wrapped_args.push("-NoLogo".to_string());
+        wrapped_args.push("-NoProfile".to_string());
+        wrapped_args.push("-ExecutionPolicy".to_string());
+        wrapped_args.push("Bypass".to_string());
+        wrapped_args.push("-File".to_string());
+        wrapped_args.push(program);
+        wrapped_args.extend(args);
+        ("powershell.exe".to_string(), wrapped_args)
+    } else {
+        (program, args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_script_invocation;
+
+    #[test]
+    fn wraps_cmd_script_with_cmd_exe() {
+        let (program, args) = wrap_script_invocation(
+            "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd".to_string(),
+            vec!["--help".to_string()],
+        );
+        assert_eq!(program, "cmd.exe");
+        assert_eq!(
+            args,
+            vec![
+                "/d".to_string(),
+                "/s".to_string(),
+                "/c".to_string(),
+                "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd".to_string(),
+                "--help".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn wraps_ps1_script_with_powershell() {
+        let (program, args) = wrap_script_invocation(
+            "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.ps1".to_string(),
+            vec!["--version".to_string()],
+        );
+        assert_eq!(program, "powershell.exe");
+        assert_eq!(
+            args,
+            vec![
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.ps1".to_string(),
+                "--version".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_non_script_program_unchanged() {
+        let (program, args) =
+            wrap_script_invocation("C:\\Windows\\System32\\notepad.exe".to_string(), vec![]);
+        assert_eq!(program, "C:\\Windows\\System32\\notepad.exe");
+        assert!(args.is_empty());
+    }
 }

@@ -61,8 +61,7 @@ pub async fn run_path_sync() -> i32 {
                                 .collect();
 
                             let path_str = linux_dirs.join(":");
-                            let current_path =
-                                std::env::var("PATH").unwrap_or_default();
+                            let current_path = std::env::var("PATH").unwrap_or_default();
                             if current_path.is_empty() {
                                 println!("export PATH='{path_str}'");
                             } else {

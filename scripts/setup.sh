@@ -6,7 +6,8 @@ set -euo pipefail
 
 INSTALL_DIR="/usr/local/bin"
 CONFIG_FILE="/etc/interop.toml"
-BINFMT_NAME="WSLInterop"
+BINFMT_BASENAME="WSLInterop"
+BINFMT_EXTENSIONS=("exe" "cmd" "bat" "ps1")
 CLIENT_BIN="interop-client"
 
 # Check for root
@@ -28,11 +29,17 @@ fi
 
 echo "=== VMware Interop Setup ==="
 
-# 1. Unregister existing binfmt entry first (the F flag keeps the binary open)
-if [ -f "/proc/sys/fs/binfmt_misc/${BINFMT_NAME}" ]; then
-    echo "[1/5] Unregistering existing binfmt handler..."
-    echo -1 > "/proc/sys/fs/binfmt_misc/${BINFMT_NAME}"
+# 1. Unregister existing binfmt entries first (the F flag keeps the binary open)
+echo "[1/5] Unregistering existing binfmt handlers..."
+if [ -f "/proc/sys/fs/binfmt_misc/${BINFMT_BASENAME}" ]; then
+    echo -1 > "/proc/sys/fs/binfmt_misc/${BINFMT_BASENAME}"
 fi
+for ext in "${BINFMT_EXTENSIONS[@]}"; do
+    name="${BINFMT_BASENAME}_${ext}"
+    if [ -f "/proc/sys/fs/binfmt_misc/${name}" ]; then
+        echo -1 > "/proc/sys/fs/binfmt_misc/${name}"
+    fi
+done
 
 # 2. Install binary (rm first to unlink the old inode — cp into a busy file fails)
 echo "[2/5] Installing ${CLIENT_BIN} to ${INSTALL_DIR}..."
@@ -56,20 +63,23 @@ else
     echo "[3/5] Config already exists at ${CONFIG_FILE}, skipping."
 fi
 
-# 4. Register binfmt_misc for .exe files
-echo "[4/5] Registering binfmt_misc handler for .exe files..."
+# 4. Register binfmt_misc for Windows executable/script extensions
+echo "[4/5] Registering binfmt_misc handlers for .exe/.cmd/.bat/.ps1 files..."
 
 # Mount binfmt_misc if not already mounted
 if ! mountpoint -q /proc/sys/fs/binfmt_misc 2>/dev/null; then
     mount -t binfmt_misc none /proc/sys/fs/binfmt_misc || true
 fi
 
-# Register: match .exe extension (not MZ magic) because VMware HGFS
+# Register: match extensions (not MZ magic) because VMware HGFS
 # may present hardlinked files as empty (0 bytes), so magic-based
 # matching fails for those executables.
 # Flags: F = fix binary (use registered path even in other mount namespaces)
-echo ":${BINFMT_NAME}:E::exe::${INSTALL_DIR}/${CLIENT_BIN}:F" > /proc/sys/fs/binfmt_misc/register
-echo "  -> Registered .exe handler via binfmt_misc"
+for ext in "${BINFMT_EXTENSIONS[@]}"; do
+    name="${BINFMT_BASENAME}_${ext}"
+    echo ":${name}:E::${ext}::${INSTALL_DIR}/${CLIENT_BIN}:F" > /proc/sys/fs/binfmt_misc/register
+    echo "  -> Registered .${ext} handler via binfmt_misc (${name})"
+done
 
 # 4. Shell integration instructions
 echo "[5/5] Setup complete!"

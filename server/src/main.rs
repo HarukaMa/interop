@@ -90,7 +90,9 @@ fn main() {
         // Attach to parent console (e.g. cmd/powershell that launched us)
         #[cfg(windows)]
         unsafe {
-            use windows_sys::Win32::System::Console::{AttachConsole, AllocConsole, ATTACH_PARENT_PROCESS};
+            use windows_sys::Win32::System::Console::{
+                AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS,
+            };
             if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
                 AllocConsole();
             }
