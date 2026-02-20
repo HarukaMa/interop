@@ -7,7 +7,7 @@ set -euo pipefail
 INSTALL_DIR="/usr/local/bin"
 CONFIG_FILE="/etc/interop.toml"
 BINFMT_BASENAME="WSLInterop"
-BINFMT_EXTENSIONS=("exe" "cmd" "bat" "ps1")
+BINFMT_EXTENSIONS=("exe" "EXE" "Exe" "cmd" "CMD" "Cmd" "bat" "BAT" "Bat" "ps1" "PS1" "Ps1")
 CLIENT_BIN="interop-client"
 
 # Check for root
