@@ -39,17 +39,12 @@ pub async fn run_exec(program: String, args: Vec<String>) -> i32 {
     let (mut reader, writer) = io::split(stream);
     let writer = Arc::new(Mutex::new(writer));
 
-    let cwd = std::env::current_dir()
-        .map(|p| linux_to_windows(p.to_str().unwrap_or("/")))
-        .unwrap_or_default();
+    let cwd = std::env::current_dir().map(|p| p.to_str().unwrap_or("/").to_owned());
 
     let translated_args: Vec<String> = args.iter().map(|a| translate_arg(a)).collect();
 
-    let program = if looks_like_path(&program) {
-        linux_to_windows(&program)
-    } else {
-        program
-    };
+    let program = translate_program(program, cwd.as_deref().ok());
+    let cwd = cwd.map(|p| linux_to_windows(&p)).unwrap_or_default();
     let (program, translated_args) = wrap_script_invocation(program, translated_args);
 
     let req = ExecRequest {
@@ -202,6 +197,20 @@ pub async fn run_exec(program: String, args: Vec<String>) -> i32 {
     exit_code
 }
 
+fn translate_program(program: String, cwd: Option<&str>) -> String {
+    if !looks_like_path(&program) {
+        return program;
+    }
+
+    if program.starts_with('/') {
+        linux_to_windows(&program)
+    } else if let Some(cwd) = cwd {
+        linux_to_windows(&format!("{}/{program}", cwd.trim_end_matches('/')))
+    } else {
+        linux_to_windows(&program)
+    }
+}
+
 /// Wrap Windows script extensions with their host shell.
 ///
 /// - `.cmd` / `.bat` => `cmd.exe /d /s /c <script> ...`
@@ -233,7 +242,29 @@ fn wrap_script_invocation(program: String, args: Vec<String>) -> (String, Vec<St
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_script_invocation;
+    use super::{translate_program, wrap_script_invocation};
+
+    #[test]
+    fn resolves_relative_program_against_current_directory() {
+        assert_eq!(
+            translate_program(
+                "./cryptobox-keygen.exe".to_string(),
+                Some("/mnt/hgfs/C/Users/User/src/cryptobox/target/release"),
+            ),
+            "C:\\Users\\User\\src\\cryptobox\\target\\release\\.\\cryptobox-keygen.exe"
+        );
+    }
+
+    #[test]
+    fn resolves_parent_relative_program_against_current_directory() {
+        assert_eq!(
+            translate_program(
+                "../cryptobox-keygen.exe".to_string(),
+                Some("/mnt/hgfs/C/Users/User/src/cryptobox/target/release"),
+            ),
+            "C:\\Users\\User\\src\\cryptobox\\target\\release\\..\\cryptobox-keygen.exe"
+        );
+    }
 
     #[test]
     fn wraps_cmd_script_with_cmd_exe() {
