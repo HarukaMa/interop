@@ -63,8 +63,17 @@ pub fn windows_to_linux(path: &str) -> String {
 }
 
 /// Heuristic: does this string look like a path that should be translated?
+///
+/// Single-component `/foo` arguments with 1-2 bytes after the slash are
+/// treated as Windows switches. Root and multi-component paths qualify.
 pub fn looks_like_path(s: &str) -> bool {
-    s.starts_with('/') || s.starts_with("./") || s.starts_with("../")
+    if s.starts_with("./") || s.starts_with("../") {
+        return true;
+    }
+    if let Some(rest) = s.strip_prefix('/') {
+        return rest.is_empty() || rest.contains('/') || rest.len() >= 3;
+    }
+    false
 }
 
 /// Translate a single argument, handling `--flag=value` splitting.
@@ -73,7 +82,7 @@ pub fn translate_arg(arg: &str) -> String {
     if let Some(eq_pos) = arg.find('=') {
         let (flag, value) = arg.split_at(eq_pos);
         let value = &value[1..]; // skip '='
-        if looks_like_path(value) {
+        if value.starts_with('/') || looks_like_path(value) {
             return format!("{}={}", flag, linux_to_windows(value));
         }
     }
@@ -125,5 +134,59 @@ mod tests {
     fn test_translate_arg_plain() {
         assert_eq!(translate_arg("hello"), "hello");
         assert_eq!(translate_arg("-v"), "-v");
+    }
+
+    #[test]
+    fn test_looks_like_path_windows_switches() {
+        assert!(!looks_like_path("/k"));
+        assert!(!looks_like_path("/c"));
+        assert!(!looks_like_path("/d"));
+        assert!(!looks_like_path("/s"));
+        assert!(!looks_like_path("/p"));
+        assert!(!looks_like_path("/ab"));
+    }
+
+    #[test]
+    fn test_looks_like_path_linux_dirs() {
+        assert!(looks_like_path("/tmp"));
+        assert!(looks_like_path("/etc"));
+        assert!(looks_like_path("/bin"));
+        assert!(looks_like_path("/usr"));
+        assert!(looks_like_path("/opt"));
+        assert!(looks_like_path("/home"));
+        assert!(looks_like_path("/var"));
+        assert!(looks_like_path("/dev"));
+        assert!(looks_like_path("/mnt"));
+    }
+
+    #[test]
+    fn test_looks_like_path_multicomponent() {
+        assert!(looks_like_path("/home/user"));
+        assert!(looks_like_path("/mnt/hgfs/C/file"));
+        assert!(looks_like_path("/tmp/test.txt"));
+        assert!(looks_like_path("./file"));
+        assert!(looks_like_path("../dir"));
+    }
+
+    #[test]
+    fn test_translate_arg_windows_switches_preserved() {
+        assert_eq!(translate_arg("/k"), "/k");
+        assert_eq!(translate_arg("/c"), "/c");
+        assert_eq!(translate_arg("/d"), "/d");
+    }
+
+    #[test]
+    fn test_translate_arg_linux_paths_translated() {
+        assert_eq!(translate_arg("/tmp"), "W:\\tmp");
+        assert_eq!(translate_arg("/etc"), "W:\\etc");
+        assert_eq!(translate_arg("/home/user"), "W:\\home\\user");
+        assert_eq!(translate_arg("/"), "W:\\");
+    }
+
+    #[test]
+    fn test_translate_arg_short_explicit_paths() {
+        assert_eq!(translate_arg("--output=/a"), "--output=W:\\a");
+        assert_eq!(translate_arg("--output=/ab"), "--output=W:\\ab");
+        assert_eq!(translate_arg("--output=/"), "--output=W:\\");
     }
 }

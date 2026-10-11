@@ -29,7 +29,7 @@ $ uv.exe pip install foo    -->   uv.exe pip install foo
 |---|---|
 | `/mnt/hgfs/C/Users/me/file.txt` | `C:\Users\me\file.txt` |
 | `/home/user/project` | `W:\home\user\project` |
-| `./relative/path` | translated relative to CWD |
+| `./tool.exe` (executable) | resolved against the Linux CWD, then translated |
 
 The shared filesystem mount prefix and drive letter mapping are configurable. By default, `/mnt/hgfs/X/...` maps to `X:\...` (VMware-style). Other Linux paths map to a configurable drive letter (`W:` by default, expecting the Linux root exported to Windows as a network drive or similar). Both the prefix and drive letter can be changed in `interop.toml` to match any shared filesystem layout.
 
@@ -89,7 +89,7 @@ Config: `%APPDATA%\interop\interop.toml`
 sudo bash scripts/setup.sh
 ```
 
-This installs the client binary, registers `binfmt_misc` handlers (by `.exe`, `.cmd`, `.bat`, and `.ps1` extension), and creates `/etc/interop.toml`. Edit the config to set your Windows host IP:
+This installs the client binary, registers `binfmt_misc` handlers for lowercase, uppercase, and title-case extensions (`exe`/`EXE`/`Exe`, and likewise for `cmd`, `bat`, and `ps1`), and creates `/etc/interop.toml`. Edit the config to set your Windows host IP:
 
 ```toml
 host = "172.16.0.1"    # IP address of the Windows machine running the server
@@ -130,7 +130,9 @@ codex.cmd --help
 codex.ps1 --help
 ```
 
-Path arguments starting with `/`, `./`, or `../` are automatically translated. Flag arguments like `--output=/some/path` are split on `=` and the path portion is translated.
+Absolute executable paths are translated, and executable paths starting with `./` or `../` are resolved against the Linux client's current directory before translation. Bare executable names keep their PATH lookup behavior.
+
+Path arguments starting with `./` or `../`, the root `/`, and multi-component absolute paths are translated. For single-component `/foo` arguments, one or two bytes after the slash are treated as Windows switches, preserving `/c` and `/k`. Longer names such as `/tmp` are translated. This heuristic also translates longer Windows switches such as `/all` and leaves short standalone paths such as `/a` unchanged. Flag arguments like `--output=/a` are split on `=` and the absolute path value is translated regardless of length.
 
 When launching `.cmd`/`.bat`, the client wraps execution through `cmd.exe /d /s /c`. For `.ps1`, it wraps through `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File`.
 

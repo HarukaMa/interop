@@ -198,7 +198,7 @@ pub async fn run_exec(program: String, args: Vec<String>) -> i32 {
 }
 
 fn translate_program(program: String, cwd: Option<&str>) -> String {
-    if !looks_like_path(&program) {
+    if !(program.starts_with('/') || program.starts_with("./") || program.starts_with("../")) {
         return program;
     }
 
@@ -264,6 +264,16 @@ mod tests {
             ),
             "C:\\Users\\User\\src\\cryptobox\\target\\release\\..\\cryptobox-keygen.exe"
         );
+    }
+
+    #[test]
+    fn translates_short_absolute_program_paths() {
+        for program in ["/a", "/ab"] {
+            assert_eq!(
+                translate_program(program.to_string(), Some("/mnt/hgfs/C/work")),
+                interop_protocol::linux_to_windows(program)
+            );
+        }
     }
 
     #[test]
